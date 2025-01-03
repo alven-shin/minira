@@ -1,0 +1,8 @@
+[[language]]
+name = "rust"
+auto-format = true
+language-servers = ["minira"]
+
+[language-server.minira]
+command = "cargo"
+args = ["run", "--bin", "minira"]
