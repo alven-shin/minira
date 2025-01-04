@@ -1,5 +1,6 @@
-use crate::Backend;
 use tower_lsp::lsp_types::*;
+
+use crate::Backend;
 
 pub async fn handle_did_open(
     backend: &Backend,

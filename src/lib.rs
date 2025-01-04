@@ -3,7 +3,9 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
+mod error;
 mod file_sync;
+mod format;
 
 #[derive(Debug)]
 struct Backend {
@@ -38,6 +40,7 @@ impl LanguageServer for Backend {
                         save: Some(TextDocumentSyncSaveOptions::Supported(false)),
                     },
                 )),
+                document_formatting_provider: Some(OneOf::Left(true)),
                 ..Default::default()
             },
         })
@@ -62,6 +65,10 @@ impl LanguageServer for Backend {
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         file_sync::handle_did_change(self, params).await;
+    }
+
+    async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
+        format::handle_formatting(self, params).await
     }
 
     async fn shutdown(&self) -> Result<()> {
