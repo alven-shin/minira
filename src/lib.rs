@@ -40,7 +40,11 @@ impl LanguageServer for Backend {
                         save: Some(TextDocumentSyncSaveOptions::Supported(false)),
                     },
                 )),
-                document_formatting_provider: Some(OneOf::Left(true)),
+                document_formatting_provider: Some(OneOf::Right(DocumentFormattingOptions {
+                    work_done_progress_options: WorkDoneProgressOptions {
+                        work_done_progress: Some(false),
+                    },
+                })),
                 ..Default::default()
             },
         })
