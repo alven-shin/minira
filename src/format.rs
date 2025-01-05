@@ -5,8 +5,7 @@ use tokio::process::Command;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 
-use crate::error;
-use crate::error::FILE_NOT_OPEN;
+use crate::error::{self, FILE_NOT_OPEN};
 use crate::Backend;
 
 pub async fn handle_formatting(

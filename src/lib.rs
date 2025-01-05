@@ -1,8 +1,12 @@
+use std::collections::HashMap;
+
 use dashmap::DashMap;
+use tokio::sync::Mutex;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
+mod diagnostic;
 mod error;
 mod file_sync;
 mod format;
@@ -10,7 +14,10 @@ mod format;
 #[derive(Debug)]
 struct Backend {
     client: Client,
+    /// file path -> file contents
     opened_files: DashMap<Url, String>,
+    /// list of files that have diagnostics
+    diagnostics: Mutex<HashMap<Url, Vec<Diagnostic>>>,
 }
 
 impl Backend {
@@ -18,6 +25,7 @@ impl Backend {
         Self {
             client,
             opened_files: DashMap::new(),
+            diagnostics: Mutex::default(),
         }
     }
 }
@@ -37,7 +45,9 @@ impl LanguageServer for Backend {
                         change: Some(TextDocumentSyncKind::FULL),
                         will_save: Some(false),
                         will_save_wait_until: Some(false),
-                        save: Some(TextDocumentSyncSaveOptions::Supported(false)),
+                        save: Some(TextDocumentSyncSaveOptions::SaveOptions(SaveOptions {
+                            include_text: Some(false),
+                        })),
                     },
                 )),
                 document_formatting_provider: Some(OneOf::Right(DocumentFormattingOptions {
@@ -57,6 +67,7 @@ impl LanguageServer for Backend {
                 concat!("hello world from ", env!("CARGO_PKG_NAME")),
             )
             .await;
+        diagnostic::handle_diagnostics(self).await;
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
@@ -69,6 +80,10 @@ impl LanguageServer for Backend {
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         file_sync::handle_did_change(self, params).await;
+    }
+
+    async fn did_save(&self, _: DidSaveTextDocumentParams) {
+        diagnostic::handle_diagnostics(self).await;
     }
 
     async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
