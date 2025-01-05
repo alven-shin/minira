@@ -3,6 +3,16 @@ name = "minira"
 version = "0.1.0"
 edition = "2021"
 
+[lints.rust]
+rust-2018-idioms = "deny"
+
+[lints.clippy]
+dbg_macro = "warn"
+unwrap_used = "warn"
+pedantic = { level = "warn", priority = -1 }
+uninlined_format_args = "allow"
+wildcard_imports = "allow"
+
 [dependencies]
 dashmap = "6.1.0"
 serde = { version = "1.0.217", features = ["derive"] }

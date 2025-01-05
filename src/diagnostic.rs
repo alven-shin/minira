@@ -14,6 +14,7 @@ struct DiagnosticMessage {
 }
 
 #[derive(Debug, Deserialize)]
+#[expect(clippy::struct_field_names)]
 struct Message {
     children: Vec<Message>,
     level: String,
@@ -31,6 +32,15 @@ struct Span {
     file_name: PathBuf,
     label: Option<String>,
     suggested_replacement: Option<String>,
+    suggestion_applicability: Option<Applicability>,
+}
+
+#[derive(Debug, Deserialize)]
+enum Applicability {
+    MachineApplicable,
+    MaybeIncorrect,
+    HasPlaceholders,
+    Unspecified,
 }
 
 #[derive(Debug, Deserialize)]
@@ -73,7 +83,6 @@ pub async fn handle_diagnostics(
         let Ok(diagnostic): Result<DiagnosticMessage, _> = serde_json::from_str(line) else {
             continue;
         };
-        dbg!();
 
         // recursively parse all diagnostics
         let src_root = diagnostic
@@ -103,12 +112,10 @@ fn parse_diagnostics(
     message: Message,
 ) {
     let severity = match message.level.as_str() {
-        "error" => Some(DiagnosticSeverity::ERROR),
+        "error" | "error: internal compiler error" => Some(DiagnosticSeverity::ERROR),
+        "note" | "failure-note" => Some(DiagnosticSeverity::INFORMATION),
         "warning" => Some(DiagnosticSeverity::WARNING),
-        "note" => Some(DiagnosticSeverity::INFORMATION),
         "help" => Some(DiagnosticSeverity::HINT),
-        "failure-note" => Some(DiagnosticSeverity::INFORMATION),
-        "error: internal compiler error" => Some(DiagnosticSeverity::ERROR),
         _ => {
             errors.push(format!("unknown severity: {}", message.level));
             None

@@ -71,11 +71,11 @@ impl LanguageServer for Backend {
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
-        file_sync::handle_did_open(self, params).await;
+        file_sync::handle_did_open(self, params);
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
-        file_sync::handle_did_close(self, params).await;
+        file_sync::handle_did_close(self, &params);
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {

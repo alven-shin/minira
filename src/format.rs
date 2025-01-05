@@ -52,6 +52,7 @@ pub async fn handle_formatting(
                 character: 0,
             },
             end: Position {
+                #[expect(clippy::cast_possible_truncation)]
                 line: lines as _,
                 character: 0,
             },
