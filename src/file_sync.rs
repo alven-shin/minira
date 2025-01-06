@@ -1,3 +1,4 @@
+use ropey::Rope;
 use tower_lsp::lsp_types::*;
 
 use crate::Backend;
@@ -8,31 +9,21 @@ pub fn handle_did_open(
         text_document: TextDocumentItem { uri, text, .. },
     }: DidOpenTextDocumentParams,
 ) {
-    backend.opened_files.insert(uri, text);
+    backend.opened_files.insert(uri, Rope::from(text));
 }
 
 pub fn handle_did_close(backend: &Backend, params: &DidCloseTextDocumentParams) {
     backend.opened_files.remove(&params.text_document.uri);
 }
 
-pub async fn handle_did_change(backend: &Backend, mut params: DidChangeTextDocumentParams) {
-    let [TextDocumentContentChangeEvent {
-        range: None,
-        range_length: None,
-        ref mut text,
-    }] = &mut params.content_changes[..]
-    else {
-        backend
-            .client
-            .log_message(
-                MessageType::ERROR,
-                "expected single change containing entire document",
-            )
-            .await;
-        return;
-    };
-
-    let Some(mut file) = backend.opened_files.get_mut(&params.text_document.uri) else {
+pub async fn handle_did_change(
+    backend: &Backend,
+    DidChangeTextDocumentParams {
+        text_document: VersionedTextDocumentIdentifier { uri, .. },
+        content_changes,
+    }: DidChangeTextDocumentParams,
+) {
+    let Some(mut document) = backend.opened_files.get_mut(&uri) else {
         backend
             .client
             .log_message(MessageType::WARNING, "document not open")
@@ -40,5 +31,30 @@ pub async fn handle_did_change(backend: &Backend, mut params: DidChangeTextDocum
         return;
     };
 
-    std::mem::swap(file.value_mut(), text);
+    for TextDocumentContentChangeEvent { range, text, .. } in content_changes {
+        let Some(Range {
+            start:
+                Position {
+                    line: line_start,
+                    character: character_start,
+                },
+            end:
+                Position {
+                    line: line_end,
+                    character: character_end,
+                },
+        }) = range
+        else {
+            backend
+                .client
+                .log_message(MessageType::ERROR, "expected incremental change range")
+                .await;
+            return;
+        };
+
+        let start = document.line_to_char(line_start as _) + character_start as usize;
+        let end = document.line_to_char(line_end as _) + character_end as usize;
+        document.remove(start..end);
+        document.insert(start, &text);
+    }
 }

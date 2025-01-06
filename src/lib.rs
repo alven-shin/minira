@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use dashmap::DashMap;
+use ropey::Rope;
 use tokio::sync::Mutex;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
@@ -15,7 +16,7 @@ mod format;
 struct Backend {
     client: Client,
     /// file path -> file contents
-    opened_files: DashMap<Url, String>,
+    opened_files: DashMap<Url, Rope>,
     /// list of files that have diagnostics
     diagnostics: Mutex<HashMap<Url, Vec<Diagnostic>>>,
 }
@@ -42,7 +43,7 @@ impl LanguageServer for Backend {
                 text_document_sync: Some(TextDocumentSyncCapability::Options(
                     TextDocumentSyncOptions {
                         open_close: Some(true),
-                        change: Some(TextDocumentSyncKind::FULL),
+                        change: Some(TextDocumentSyncKind::INCREMENTAL),
                         will_save: Some(false),
                         will_save_wait_until: Some(false),
                         save: Some(TextDocumentSyncSaveOptions::SaveOptions(SaveOptions {
