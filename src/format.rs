@@ -1,5 +1,7 @@
 use std::process::Stdio;
+use std::str::Lines;
 
+use itertools::Itertools;
 use similar::{DiffOp, TextDiff};
 use tokio::io::AsyncWriteExt as _;
 use tokio::process::Command;
@@ -51,11 +53,15 @@ pub async fn handle_formatting(
     let new_text = String::from_utf8(output.stdout).expect("rustfmt output was not valid utf-8");
     let mut edits = Vec::new();
     let diff = TextDiff::from_lines(&original, &new_text);
+    let mut lines = new_text.lines();
 
     // convert the diff to text edits
     for op in diff.ops() {
         match op {
-            DiffOp::Equal { .. } => (),
+            DiffOp::Equal { len, .. } => {
+                let (_, xs) = lines.split_at(*len);
+                lines = xs;
+            }
             DiffOp::Delete {
                 old_index, old_len, ..
             } => {
@@ -76,10 +82,11 @@ pub async fn handle_formatting(
                 });
             }
             DiffOp::Insert {
-                old_index,
-                new_index,
-                new_len,
+                old_index, new_len, ..
             } => {
+                let (new_text, xs) = lines.split_at(*new_len);
+                lines = xs;
+
                 edits.push(TextEdit {
                     range: Range {
                         #[expect(clippy::cast_possible_truncation)]
@@ -93,18 +100,18 @@ pub async fn handle_formatting(
                             character: 0,
                         },
                     },
-                    new_text: InterspersedLines::from(
-                        new_text.lines().skip(*new_index).take(*new_len),
-                    )
-                    .collect(),
+                    new_text: new_text.into_iter().collect(),
                 });
             }
             DiffOp::Replace {
                 old_index,
                 old_len,
-                new_index,
                 new_len,
+                ..
             } => {
+                let (new_text, xs) = lines.split_at(*new_len);
+                lines = xs;
+
                 edits.push(TextEdit {
                     range: Range {
                         #[expect(clippy::cast_possible_truncation)]
@@ -118,51 +125,27 @@ pub async fn handle_formatting(
                             character: 0,
                         },
                     },
-                    new_text: InterspersedLines::from(
-                        new_text.lines().skip(*new_index).take(*new_len),
-                    )
-                    .collect(),
+                    new_text: new_text.collect(),
                 });
             }
         }
     }
 
+    debug_assert_eq!(lines.next(), None);
     Ok(Some(edits))
 }
 
-/// custom iterator to reinsert the removed newlines from Lines iterator
-struct InterspersedLines<T> {
-    iter: T,
-    newline: bool,
+trait Splitable<'a> {
+    fn split_at(self, n: usize) -> (impl Iterator<Item = &'a str>, Self);
 }
 
-impl<'a, T> From<T> for InterspersedLines<T>
-where
-    T: Iterator<Item = &'a str>,
-{
-    fn from(iter: T) -> Self {
-        Self {
-            iter,
-            newline: false,
-        }
-    }
-}
-
-impl<'a, T> Iterator for InterspersedLines<T>
-where
-    T: Iterator<Item = &'a str>,
-{
-    type Item = &'a str;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.newline {
-            self.newline = false;
-            Some("\n")
-        } else if let x @ Some(_) = self.iter.next() {
-            self.newline = true;
-            x
-        } else {
-            None
-        }
+impl<'a> Splitable<'a> for Lines<'a> {
+    fn split_at(mut self, n: usize) -> (impl Iterator<Item = &'a str>, Self) {
+        let x = (0..n)
+            .filter_map(|_| self.next())
+            .collect::<Vec<_>>()
+            .into_iter()
+            .interleave_shortest(std::iter::repeat("\n"));
+        (x, self)
     }
 }
