@@ -1,12 +1,14 @@
 use std::collections::HashMap;
 
 use dashmap::DashMap;
+use diagnostic::QuickFix;
 use ropey::Rope;
 use tokio::sync::Mutex;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
+mod code_action;
 mod diagnostic;
 mod error;
 mod file_sync;
@@ -18,7 +20,7 @@ struct Backend {
     /// file path -> file contents
     opened_files: DashMap<Url, Rope>,
     /// list of files that have diagnostics
-    diagnostics: Mutex<HashMap<Url, Vec<Diagnostic>>>,
+    diagnostics: Mutex<HashMap<Url, Vec<(Diagnostic, QuickFix)>>>,
 }
 
 impl Backend {
@@ -56,6 +58,15 @@ impl LanguageServer for Backend {
                         work_done_progress: Some(false),
                     },
                 })),
+                code_action_provider: Some(CodeActionProviderCapability::Options(
+                    CodeActionOptions {
+                        code_action_kinds: Some(Vec::from([CodeActionKind::QUICKFIX])),
+                        work_done_progress_options: WorkDoneProgressOptions {
+                            work_done_progress: Some(false),
+                        },
+                        resolve_provider: Some(false),
+                    },
+                )),
                 ..Default::default()
             },
         })
@@ -89,6 +100,10 @@ impl LanguageServer for Backend {
 
     async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
         format::handle_formatting(self, params).await
+    }
+
+    async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
+        code_action::handle_code_action(self, params).await
     }
 
     async fn shutdown(&self) -> Result<()> {

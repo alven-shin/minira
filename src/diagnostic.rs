@@ -31,12 +31,18 @@ struct Span {
     column_end: u32,
     file_name: PathBuf,
     label: Option<String>,
-    suggested_replacement: Option<String>,
-    suggestion_applicability: Option<Applicability>,
+    #[serde(flatten)]
+    quick_fix: QuickFix,
 }
 
 #[derive(Debug, Deserialize)]
-enum Applicability {
+pub struct QuickFix {
+    pub suggested_replacement: Option<String>,
+    pub suggestion_applicability: Option<Applicability>,
+}
+
+#[derive(Debug, Deserialize)]
+pub enum Applicability {
     MachineApplicable,
     MaybeIncorrect,
     HasPlaceholders,
@@ -100,14 +106,18 @@ pub async fn handle_diagnostics(
     // publish all diagnostics
     for (uri, diagnostics) in diagnostics.iter() {
         client
-            .publish_diagnostics(uri.clone(), diagnostics.clone(), None)
+            .publish_diagnostics(
+                uri.clone(),
+                diagnostics.iter().map(|d| d.0.clone()).collect(),
+                None,
+            )
             .await;
     }
 }
 
 fn parse_diagnostics(
     src_root: &Path,
-    diagnostics: &mut HashMap<Url, Vec<Diagnostic>>,
+    diagnostics: &mut HashMap<Url, Vec<(Diagnostic, QuickFix)>>,
     errors: &mut Vec<String>,
     message: Message,
 ) {
@@ -141,17 +151,20 @@ fn parse_diagnostics(
             message.push_str(&format!("\n{}", label));
         }
 
-        diagnostics.entry(uri).or_default().push(Diagnostic {
-            range,
-            severity,
-            code: code.clone(),
-            code_description: None,
-            source: Some(env!("CARGO_PKG_NAME").to_string()),
-            message,
-            related_information: None,
-            tags: None,
-            data: None,
-        });
+        diagnostics.entry(uri).or_default().push((
+            Diagnostic {
+                range,
+                severity,
+                code: code.clone(),
+                code_description: None,
+                source: Some(env!("CARGO_PKG_NAME").to_string()),
+                message,
+                related_information: None,
+                tags: None,
+                data: None,
+            },
+            span.quick_fix,
+        ));
     }
 
     for child in message.children {
