@@ -1,7 +1,8 @@
 {pkgs, ...}: rec {
-  toolchain = pkgs.rust-bin.stable.latest.default.override {
-    extensions = ["rust-src"];
-  };
+  toolchain = pkgs.rust-bin.selectLatestNightlyWith (toolchain:
+    toolchain.default.override {
+      extensions = ["rust-src"];
+    });
 
   nativeBuildInputs = with pkgs;
     [helix]
