@@ -1,11 +1,11 @@
 {pkgs, ...}: rec {
   toolchain = pkgs.rust-bin.selectLatestNightlyWith (toolchain:
     toolchain.default.override {
-      extensions = ["rust-src"];
+      extensions = ["rust-src" "rustc-dev"];
     });
 
   nativeBuildInputs = with pkgs;
-    [helix]
+    [helix zlib curl]
     ++ pkgs.lib.optionals pkgs.stdenv.isLinux [mold clang]
     ++ pkgs.lib.optionals pkgs.stdenv.isDarwin []
     ++ pkgs.lib.optionals pkgs.stdenv.isDarwin (
