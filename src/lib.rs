@@ -1,3 +1,5 @@
+#![feature(rustc_private)]
+
 use std::collections::HashMap;
 
 use dashmap::DashMap;
@@ -13,6 +15,7 @@ mod diagnostic;
 mod error;
 mod file_sync;
 mod format;
+mod rustc;
 
 #[derive(Debug)]
 struct Backend {
@@ -96,6 +99,15 @@ impl LanguageServer for Backend {
 
     async fn did_save(&self, _: DidSaveTextDocumentParams) {
         diagnostic::handle_diagnostics(self).await;
+        // TODO: get the manifest path using `cargo metadata`
+        let results = rustc::check_workspace(
+            &std::env::current_dir()
+                .expect("failed to get current directory")
+                .join("Cargo.toml"),
+        )
+        .await
+        .expect("failed to check workspace");
+        dbg!(results);
     }
 
     async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
@@ -112,9 +124,15 @@ impl LanguageServer for Backend {
 }
 
 pub async fn run() {
-    let stdin = tokio::io::stdin();
-    let stdout = tokio::io::stdout();
+    let mut args = std::env::args().skip(1).peekable(); // skip the first arg, which is the executable name
 
-    let (service, socket) = LspService::new(Backend::with_client);
-    Server::new(stdin, stdout, socket).serve(service).await;
+    if let Some("rustc") = args.peek().map(String::as_str) {
+        rustc::compiler(&args.collect::<Vec<_>>());
+    } else {
+        let stdin = tokio::io::stdin();
+        let stdout = tokio::io::stdout();
+
+        let (service, socket) = LspService::new(Backend::with_client);
+        Server::new(stdin, stdout, socket).serve(service).await;
+    }
 }
