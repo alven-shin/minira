@@ -20,7 +20,8 @@ use rustc_middle::hir::nested_filter::OnlyBodies;
 use rustc_middle::ty::{Ty, TyCtxt};
 use rustc_span::{FileName, RealFileName, SourceFile, Span};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::cmp::Ordering;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::ffi::OsString;
 use std::io::{BufRead as _, Write as _};
@@ -30,12 +31,12 @@ use std::sync::Arc;
 use tokio::task::JoinError;
 use tower_lsp::lsp_types::{Position, Range, Url};
 
-pub async fn check_workspace(manifest_path: &Path) -> Result<Vec<Symbol>, JoinError> {
+pub async fn check_workspace(manifest_path: &Path) -> Result<SymbolTable, JoinError> {
     let path = manifest_path.to_owned();
     tokio::task::spawn_blocking(move || check_workspace_aux(&path)).await
 }
 
-fn check_workspace_aux(manifest_path: &Path) -> Vec<Symbol> {
+fn check_workspace_aux(manifest_path: &Path) -> SymbolTable {
     let context = GlobalContext::default().expect("Failed to create a global context");
     let workspace =
         Workspace::new(manifest_path, &context).expect("Failed to create Cargo workspace");
@@ -50,11 +51,17 @@ fn check_workspace_aux(manifest_path: &Path) -> Vec<Symbol> {
     ops::compile_with_exec(&workspace, &compile_opts, &custom_exec)
         .expect("Failed to compile the project");
 
-    let mut symbols = Vec::new();
-    while let Ok(symbol) = rx.try_recv() {
-        symbols.push(symbol);
+    let mut table = SymbolTable {
+        inner: HashMap::new(),
+    };
+    while let Ok((url, symbol)) = rx.try_recv() {
+        table.inner.entry(url).or_default().push(symbol);
     }
-    symbols
+    for symbols in table.inner.values_mut() {
+        symbols.sort_unstable();
+    }
+
+    table
 }
 
 /// the first argument argument is automatically discarded, do not manually discard it
@@ -62,17 +69,73 @@ pub fn compiler(args: &[String]) {
     RunCompiler::new(args, &mut ThirCallback).run();
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default)]
+pub struct SymbolTable {
+    /// invariant:
+    /// - the symbols in the same are sorted by line number and then by column number
+    /// - any two ranges cannot overlap
+    inner: HashMap<Url, Vec<Symbol>>,
+}
+
+impl SymbolTable {
+    pub fn merge_replace(&mut self, other: Self) {
+        for (url, symbols) in other.inner {
+            self.inner.entry(url).insert_entry(symbols);
+        }
+    }
+
+    pub fn query(&self, url: &Url, position: Position) -> Option<Symbol> {
+        let (Ok(idx) | Err(idx)) = self.inner.get(url)?.binary_search(&Symbol {
+            name: String::new(),
+            ty: String::new(),
+            range: Range {
+                start: position,
+                end: position,
+            },
+        });
+        let symbol = self.inner.get(url)?.get(idx)?;
+        (position.line == symbol.range.start.line
+            && position.character >= symbol.range.start.character
+            && position.character < symbol.range.end.character)
+            .then(|| symbol.clone())
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub struct Symbol {
     pub name: String,
     pub ty: String,
     pub range: Range,
-    pub uri: Url,
 }
+
+impl PartialOrd for Symbol {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Symbol {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match self.range.start.line.cmp(&other.range.start.line) {
+            Ordering::Less => return Ordering::Less,
+            Ordering::Greater => return Ordering::Greater,
+            Ordering::Equal => (),
+        }
+        if let Ordering::Less = self.range.start.line.cmp(&other.range.start.line) {
+            return Ordering::Less;
+        }
+        if let Ordering::Greater = self.range.start.line.cmp(&other.range.start.line) {
+            return Ordering::Greater;
+        }
+        Ordering::Equal
+    }
+}
+
+type SymbolIpc = (Url, Symbol);
 
 struct CustomExecutor {
     members: HashSet<PackageId>,
-    tx: Sender<Symbol>,
+    tx: Sender<SymbolIpc>,
 }
 
 impl Executor for CustomExecutor {
@@ -185,11 +248,13 @@ impl<'tcx> Visitor<'tcx> for TypeVisitor<'tcx> {
                 name: ident.name.to_string(),
                 ty: self.get_type(p.hir_id).to_string(),
                 range,
-                uri,
             };
+            if range.start.line != range.end.line {
+                return;
+            }
             let mut stdout = std::io::stdout().lock();
             stdout
-                .write_all(&serde_json::to_vec(&symbol).expect("failed to serialize"))
+                .write_all(&serde_json::to_vec(&(uri, symbol)).expect("failed to serialize"))
                 .expect("failed to write to stdout");
             stdout.write_all(b"\n").expect("failed to write to stdout");
         }

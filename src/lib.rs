@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use dashmap::DashMap;
 use diagnostic::QuickFix;
 use ropey::Rope;
+use rustc::SymbolTable;
 use tokio::sync::Mutex;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
@@ -24,6 +25,8 @@ struct Backend {
     opened_files: DashMap<Url, Rope>,
     /// list of files that have diagnostics
     diagnostics: Mutex<HashMap<Url, Vec<(Diagnostic, QuickFix)>>>,
+    /// symbols from all workspace files
+    symbols: std::sync::Mutex<SymbolTable>,
 }
 
 impl Backend {
@@ -32,6 +35,7 @@ impl Backend {
             client,
             opened_files: DashMap::new(),
             diagnostics: Mutex::default(),
+            symbols: std::sync::Mutex::default(),
         }
     }
 }
@@ -107,7 +111,10 @@ impl LanguageServer for Backend {
         )
         .await
         .expect("failed to check workspace");
-        dbg!(results);
+        self.symbols
+            .lock()
+            .expect("poisoned")
+            .merge_replace(results);
     }
 
     async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
