@@ -16,6 +16,7 @@ mod diagnostic;
 mod error;
 mod file_sync;
 mod format;
+mod hover;
 mod rustc;
 
 #[derive(Debug)]
@@ -74,6 +75,11 @@ impl LanguageServer for Backend {
                         resolve_provider: Some(false),
                     },
                 )),
+                hover_provider: Some(HoverProviderCapability::Options(HoverOptions {
+                    work_done_progress_options: WorkDoneProgressOptions {
+                        work_done_progress: Some(false),
+                    },
+                })),
                 ..Default::default()
             },
         })
@@ -123,6 +129,10 @@ impl LanguageServer for Backend {
 
     async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
         code_action::handle_code_action(self, params).await
+    }
+
+    async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
+        Ok(hover::handle_hover(self, params))
     }
 
     async fn shutdown(&self) -> Result<()> {

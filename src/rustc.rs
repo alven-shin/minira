@@ -116,15 +116,15 @@ impl PartialOrd for Symbol {
 
 impl Ord for Symbol {
     fn cmp(&self, other: &Self) -> Ordering {
-        match self.range.start.line.cmp(&other.range.start.line) {
-            Ordering::Less => return Ordering::Less,
-            Ordering::Greater => return Ordering::Greater,
-            Ordering::Equal => (),
+        if let res @ (Ordering::Less | Ordering::Greater) =
+            self.range.start.line.cmp(&other.range.start.line)
+        {
+            return res;
         }
-        if let Ordering::Less = self.range.start.line.cmp(&other.range.start.line) {
+        if let Ordering::Less = self.range.end.character.cmp(&other.range.start.character) {
             return Ordering::Less;
         }
-        if let Ordering::Greater = self.range.start.line.cmp(&other.range.start.line) {
+        if let Ordering::Greater = self.range.start.character.cmp(&other.range.end.character) {
             return Ordering::Greater;
         }
         Ordering::Equal
@@ -213,12 +213,12 @@ impl<'tcx> TypeVisitor<'tcx> {
         #[allow(clippy::cast_possible_truncation)]
         let range = Range {
             start: Position {
-                line: lo_line as _,
-                character: lo_col as _,
+                line: lo_line as u32 - 1,
+                character: lo_col as u32 - 1,
             },
             end: Position {
-                line: hi_line as _,
-                character: hi_col as _,
+                line: hi_line as u32 - 1,
+                character: hi_col as u32 - 1,
             },
         };
 
