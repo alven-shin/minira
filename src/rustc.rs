@@ -156,13 +156,16 @@ impl Executor for CustomExecutor {
             cmd.args_replace(&new_args);
             cmd.program(env::current_exe()?);
 
-            let output = cmd.exec_with_output()?;
+            let Ok(output) = cmd.exec_with_output() else {
+                return Ok(());
+            };
             for line in output.stdout.lines() {
                 self.tx.send(serde_json::from_str(&line?)?)?;
             }
             Ok(())
         } else {
-            cmd.exec_with_output().map(drop)
+            cmd.exec_with_output().ok();
+            Ok(())
         }
     }
 }
