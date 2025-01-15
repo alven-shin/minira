@@ -8,7 +8,7 @@ use tokio::process::Command;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 
-use crate::error::{self, FILE_NOT_OPEN};
+use crate::lsp::error::{self, FILE_NOT_OPEN};
 use crate::Backend;
 
 #[expect(clippy::too_many_lines)]

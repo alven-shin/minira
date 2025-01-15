@@ -3,21 +3,18 @@
 use std::collections::HashMap;
 
 use dashmap::DashMap;
-use diagnostic::QuickFix;
 use ropey::Rope;
-use rustc::SymbolTable;
 use tokio::sync::Mutex;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
-mod code_action;
-mod diagnostic;
-mod error;
-mod file_sync;
-mod format;
-mod hover;
+use lsp::diagnostic::QuickFix;
+use symbol::SymbolTable;
+
+mod lsp;
 mod rustc;
+mod symbol;
 
 #[derive(Debug)]
 struct Backend {
@@ -92,23 +89,23 @@ impl LanguageServer for Backend {
                 concat!("hello world from ", env!("CARGO_PKG_NAME")),
             )
             .await;
-        diagnostic::handle_diagnostics(self).await;
+        lsp::diagnostic::handle_diagnostics(self).await;
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
-        file_sync::handle_did_open(self, params);
+        lsp::file_sync::handle_did_open(self, params);
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
-        file_sync::handle_did_close(self, &params);
+        lsp::file_sync::handle_did_close(self, &params);
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
-        file_sync::handle_did_change(self, params).await;
+        lsp::file_sync::handle_did_change(self, params).await;
     }
 
     async fn did_save(&self, _: DidSaveTextDocumentParams) {
-        diagnostic::handle_diagnostics(self).await;
+        lsp::diagnostic::handle_diagnostics(self).await;
         // TODO: get the manifest path using `cargo metadata`
         let results = rustc::check_workspace(
             &std::env::current_dir()
@@ -124,15 +121,15 @@ impl LanguageServer for Backend {
     }
 
     async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
-        format::handle_formatting(self, params).await
+        lsp::format::handle_formatting(self, params).await
     }
 
     async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
-        code_action::handle_code_action(self, params).await
+        lsp::code_action::handle_code_action(self, params).await
     }
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
-        Ok(hover::handle_hover(self, params))
+        Ok(lsp::hover::handle_hover(self, params))
     }
 
     async fn shutdown(&self) -> Result<()> {

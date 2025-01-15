@@ -4,6 +4,14 @@ extern crate rustc_interface;
 extern crate rustc_middle;
 extern crate rustc_span;
 
+use std::collections::{HashMap, HashSet};
+use std::env;
+use std::ffi::OsString;
+use std::io::{BufRead as _, Write as _};
+use std::path::Path;
+use std::sync::mpsc::{self, Sender};
+use std::sync::Arc;
+
 use cargo::core::compiler::{CompileMode, Executor};
 use cargo::core::manifest::Target;
 use cargo::core::package_id::PackageId;
@@ -19,17 +27,10 @@ use rustc_interface::interface::Compiler;
 use rustc_middle::hir::nested_filter::OnlyBodies;
 use rustc_middle::ty::{Ty, TyCtxt};
 use rustc_span::{FileName, RealFileName, SourceFile, Span};
-use serde::{Deserialize, Serialize};
-use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
-use std::env;
-use std::ffi::OsString;
-use std::io::{BufRead as _, Write as _};
-use std::path::Path;
-use std::sync::mpsc::{self, Sender};
-use std::sync::Arc;
 use tokio::task::JoinError;
 use tower_lsp::lsp_types::{Position, Range, Url};
+
+use crate::symbol::{Symbol, SymbolTable};
 
 pub async fn check_workspace(manifest_path: &Path) -> Result<SymbolTable, JoinError> {
     let path = manifest_path.to_owned();
@@ -62,73 +63,6 @@ fn check_workspace_aux(manifest_path: &Path) -> SymbolTable {
     }
 
     table
-}
-
-/// the first argument argument is automatically discarded, do not manually discard it
-pub fn compiler(args: &[String]) {
-    RunCompiler::new(args, &mut ThirCallback).run();
-}
-
-#[derive(Debug, Default)]
-pub struct SymbolTable {
-    /// invariant:
-    /// - the symbols in the same are sorted by line number and then by column number
-    /// - any two ranges cannot overlap
-    inner: HashMap<Url, Vec<Symbol>>,
-}
-
-impl SymbolTable {
-    pub fn merge_replace(&mut self, other: Self) {
-        for (url, symbols) in other.inner {
-            self.inner.entry(url).insert_entry(symbols);
-        }
-    }
-
-    pub fn query(&self, url: &Url, position: Position) -> Option<Symbol> {
-        let (Ok(idx) | Err(idx)) = self.inner.get(url)?.binary_search(&Symbol {
-            name: String::new(),
-            ty: String::new(),
-            range: Range {
-                start: position,
-                end: position,
-            },
-        });
-        let symbol = self.inner.get(url)?.get(idx)?;
-        (position.line == symbol.range.start.line
-            && position.character >= symbol.range.start.character
-            && position.character < symbol.range.end.character)
-            .then(|| symbol.clone())
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
-pub struct Symbol {
-    pub name: String,
-    pub ty: String,
-    pub range: Range,
-}
-
-impl PartialOrd for Symbol {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for Symbol {
-    fn cmp(&self, other: &Self) -> Ordering {
-        if let res @ (Ordering::Less | Ordering::Greater) =
-            self.range.start.line.cmp(&other.range.start.line)
-        {
-            return res;
-        }
-        if let Ordering::Less = self.range.end.character.cmp(&other.range.start.character) {
-            return Ordering::Less;
-        }
-        if let Ordering::Greater = self.range.start.character.cmp(&other.range.end.character) {
-            return Ordering::Greater;
-        }
-        Ordering::Equal
-    }
 }
 
 type SymbolIpc = (Url, Symbol);
@@ -168,6 +102,11 @@ impl Executor for CustomExecutor {
             Ok(())
         }
     }
+}
+
+/// the first argument argument is automatically discarded, do not manually discard it
+pub fn compiler(args: &[String]) {
+    RunCompiler::new(args, &mut ThirCallback).run();
 }
 
 struct ThirCallback;
