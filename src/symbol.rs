@@ -1,3 +1,5 @@
+//! code related to the symbol table
+
 use std::{cmp::Ordering, collections::HashMap};
 
 use serde::{Deserialize, Serialize};
@@ -18,7 +20,11 @@ impl SymbolTable {
         }
     }
 
+    /// query the symbol table for the symbol at the given position using binary search since the
+    /// data is sorted
     pub fn query(&self, url: &Url, position: Position) -> Option<Symbol> {
+        // take the index from both variants because it is unlikely for the two symbols to be equal
+        // TODO: override the Eq impl to only compare the range
         let (Ok(idx) | Err(idx)) = self.inner.get(url)?.binary_search(&Symbol {
             name: String::new(),
             ty: String::new(),
@@ -27,6 +33,8 @@ impl SymbolTable {
                 end: position,
             },
         });
+
+        // try and retrieve the symbol and check to ensure the range is valid
         let symbol = self.inner.get(url)?.get(idx)?;
         (position.line == symbol.range.start.line
             && position.character >= symbol.range.start.character
@@ -49,6 +57,9 @@ impl PartialOrd for Symbol {
 }
 
 impl Ord for Symbol {
+    /// the ordering only considers the range
+    /// the invariant that ranges do not overlap must be upheld otherwise
+    /// the ord impl and sorting will be work as intended
     fn cmp(&self, other: &Self) -> Ordering {
         if let res @ (Ordering::Less | Ordering::Greater) =
             self.range.start.line.cmp(&other.range.start.line)

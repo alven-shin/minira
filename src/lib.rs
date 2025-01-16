@@ -16,14 +16,19 @@ mod lsp;
 mod rustc;
 mod symbol;
 
+/// TODO: add a oncelock field to retrieve the workspace root using `cargo metadata`
 #[derive(Debug)]
 struct Backend {
+    /// handle to the editor client to send notifications and logs
     client: Client,
-    /// file path -> file contents
+    /// map of URIs to opened file contents
     opened_files: DashMap<Url, Rope>,
-    /// list of files that have diagnostics
+    /// map of URIs to list of diagnostics and quick fixes
+    /// TODO: split into two maps:
+    /// - files with diagnostics (makes it easy to clear diagnostics)
+    /// - files with quick fixes available
     diagnostics: Mutex<HashMap<Url, Vec<(Diagnostic, QuickFix)>>>,
-    /// symbols from all workspace files
+    /// symbols from the entire workspace
     symbols: std::sync::Mutex<SymbolTable>,
 }
 
@@ -40,6 +45,12 @@ impl Backend {
 
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
+    /// current supported capabilities:
+    /// - text synchronization
+    /// - formatting
+    /// - diagnostics
+    /// - quick fixes
+    /// - hover
     async fn initialize(&self, _: InitializeParams) -> Result<InitializeResult> {
         Ok(InitializeResult {
             server_info: Some(ServerInfo {
@@ -104,6 +115,10 @@ impl LanguageServer for Backend {
         lsp::file_sync::handle_did_change(self, params).await;
     }
 
+    /// - most of the computation happens on save
+    /// - a bundled rustc compiler is called to perform type checking
+    /// - TODO: use the diagnostics from the bundled compiler instead of performing a separate
+    /// cargo check call
     async fn did_save(&self, _: DidSaveTextDocumentParams) {
         lsp::diagnostic::handle_diagnostics(self).await;
         // TODO: get the manifest path using `cargo metadata`
@@ -137,6 +152,9 @@ impl LanguageServer for Backend {
     }
 }
 
+/// entry point for the program
+/// - if the first argument is `rustc`, run the bundled rustc compiler
+/// - otherwise, run the LSP server
 pub async fn run() {
     let mut args = std::env::args().skip(1).peekable(); // skip the first arg, which is the executable name
 

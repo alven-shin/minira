@@ -1,8 +1,18 @@
+//! code for interacting with the bundled nightly rustc compiler
+
 extern crate rustc_driver;
 extern crate rustc_hir;
 extern crate rustc_interface;
 extern crate rustc_middle;
 extern crate rustc_span;
+
+use rustc_driver::{Callbacks, Compilation, RunCompiler};
+use rustc_hir::intravisit::{self, Visitor};
+use rustc_hir::{HirId, Pat, PatKind};
+use rustc_interface::interface::Compiler;
+use rustc_middle::hir::nested_filter::OnlyBodies;
+use rustc_middle::ty::{Ty, TyCtxt};
+use rustc_span::{FileName, RealFileName, SourceFile, Span};
 
 use std::collections::{HashMap, HashSet};
 use std::env;
@@ -20,24 +30,24 @@ use cargo::ops::{self, CompileOptions};
 use cargo::util::errors::CargoResult;
 use cargo::util::GlobalContext;
 use cargo_util::ProcessBuilder;
-use rustc_driver::{Callbacks, Compilation, RunCompiler};
-use rustc_hir::intravisit::{self, Visitor};
-use rustc_hir::{HirId, Pat, PatKind};
-use rustc_interface::interface::Compiler;
-use rustc_middle::hir::nested_filter::OnlyBodies;
-use rustc_middle::ty::{Ty, TyCtxt};
-use rustc_span::{FileName, RealFileName, SourceFile, Span};
 use tokio::task::JoinError;
 use tower_lsp::lsp_types::{Position, Range, Url};
 
 use crate::symbol::{Symbol, SymbolTable};
 
+/// run cargo check with the bundled nightly rustc compiler to get type information and diagnostics
 pub async fn check_workspace(manifest_path: &Path) -> Result<SymbolTable, JoinError> {
     let path = manifest_path.to_owned();
     tokio::task::spawn_blocking(move || check_workspace_aux(&path)).await
 }
 
 fn check_workspace_aux(manifest_path: &Path) -> SymbolTable {
+    // https://doc.rust-lang.org/nightly/nightly-rustc/cargo/ops/cargo_compile/index.html
+    // set up cargo to perform checks
+    // use a custom executor to hijack the rustc command to use the bundled nightly compiler
+    // channels are used to allow concurrent cargo tasks to send type and diagnostic information
+    // TODO: send the rx to a scoped thread to process data as it comes rather than waiting for
+    // cargo to finish
     let context = GlobalContext::default().expect("Failed to create a global context");
     let workspace =
         Workspace::new(manifest_path, &context).expect("Failed to create Cargo workspace");
@@ -52,6 +62,7 @@ fn check_workspace_aux(manifest_path: &Path) -> SymbolTable {
     ops::compile_with_exec(&workspace, &compile_opts, &custom_exec)
         .expect("Failed to compile the project");
 
+    // construct symbol table using data from cargo and rustc
     let mut table = SymbolTable {
         inner: HashMap::new(),
     };
@@ -93,6 +104,9 @@ impl Executor for CustomExecutor {
             let Ok(output) = cmd.exec_with_output() else {
                 return Ok(());
             };
+
+            // data is received as a json string
+            // TODO: read the stderr output for diagnostics
             for line in output.stdout.lines() {
                 self.tx.send(serde_json::from_str(&line?)?)?;
             }
@@ -104,7 +118,9 @@ impl Executor for CustomExecutor {
     }
 }
 
+/// the embedded nightly compiler
 /// the first argument argument is automatically discarded, do not manually discard it
+/// a custom callback is used to retrieve type information
 pub fn compiler(args: &[String]) {
     RunCompiler::new(args, &mut ThirCallback).run();
 }
@@ -128,6 +144,7 @@ impl<'tcx> TypeVisitor<'tcx> {
     fn span_location(&self, span: Span) -> Option<(Url, Range)> {
         let source_map = self.tcx.sess.source_map();
 
+        // line and columns in the source file
         let (Some(source), lo_line, lo_col, hi_line, hi_col) =
             source_map.span_to_location_info(span)
         else {
@@ -142,6 +159,9 @@ impl<'tcx> TypeVisitor<'tcx> {
         else {
             return None;
         };
+
+        // the extracted file path is relative to the manifest path
+        // TODO: use the manifest path instead of the current directory
         let Ok(current_dir) = std::env::current_dir() else {
             return None;
         };
@@ -149,6 +169,7 @@ impl<'tcx> TypeVisitor<'tcx> {
         let uri = Url::from_file_path(path).ok()?;
 
         // convert span to range
+        // subtract 1 from the line and column numbers to account for 0-based indexing
         #[allow(clippy::cast_possible_truncation)]
         let range = Range {
             start: Position {
@@ -164,12 +185,14 @@ impl<'tcx> TypeVisitor<'tcx> {
         Some((uri, range))
     }
 
+    /// get the type of the given hir ID of the variable
     fn get_type(&self, hir_id: HirId) -> Ty<'tcx> {
         let def_id = hir_id.owner.def_id;
         self.tcx.typeck(def_id).node_type(hir_id)
     }
 }
 
+/// visitor performs a nested walk through the hir to discover desired symbols
 impl<'tcx> Visitor<'tcx> for TypeVisitor<'tcx> {
     type NestedFilter = OnlyBodies;
 
@@ -179,9 +202,12 @@ impl<'tcx> Visitor<'tcx> for TypeVisitor<'tcx> {
 
     fn visit_pat(&mut self, p: &'tcx Pat<'tcx>) -> Self::Result {
         intravisit::walk_pat(self, p);
+
+        // skip symbols that were generated from macros and desugaring
         if p.span.from_expansion() {
             return;
         }
+
         if let PatKind::Binding(_, _, ident, _) = p.kind {
             let Some((uri, range)) = self.span_location(p.span) else {
                 return;
@@ -191,9 +217,15 @@ impl<'tcx> Visitor<'tcx> for TypeVisitor<'tcx> {
                 ty: self.get_type(p.hir_id).to_string(),
                 range,
             };
+
+            // all identifiers should be on the same line
+            // a check is performed here because for some reason
+            // the above from_expansion check is not enough
             if range.start.line != range.end.line {
                 return;
             }
+
+            // serialize the data and send to stdout
             let mut stdout = std::io::stdout().lock();
             stdout
                 .write_all(&serde_json::to_vec(&(uri, symbol)).expect("failed to serialize"))

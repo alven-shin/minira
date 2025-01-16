@@ -61,6 +61,9 @@ pub async fn handle_diagnostics(
         ..
     }: &Backend,
 ) {
+    // NOTE: consider using the cargo-manifest crate
+    // https://doc.rust-lang.org/cargo/reference/external-tools.html#json-messages
+
     // lock mutex during the entire function
     let mut diagnostics = diagnostics.lock().await;
 
@@ -72,6 +75,8 @@ pub async fn handle_diagnostics(
     };
 
     // run clippy to get workspace diagnostics
+    // TODO: replace with internal rustc compiler
+    // TODO: use plain cargo check to increase speed
     let output = Command::new("cargo")
         .args(["clippy", "--workspace", "--message-format", "json"])
         .output();
@@ -121,6 +126,7 @@ fn parse_diagnostics(
     errors: &mut Vec<String>,
     message: Message,
 ) {
+    // https://doc.rust-lang.org/rustc/json.html#diagnostics
     let severity = match message.level.as_str() {
         "error" | "error: internal compiler error" => Some(DiagnosticSeverity::ERROR),
         "note" | "failure-note" => Some(DiagnosticSeverity::INFORMATION),

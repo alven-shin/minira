@@ -1,3 +1,5 @@
+//! module to group LSP related code
+
 pub mod code_action;
 pub mod diagnostic;
 pub mod error;
