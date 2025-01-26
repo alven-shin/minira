@@ -25,6 +25,12 @@
       cargoLock = {
         lockFile = ../Cargo.lock;
       };
+
+      postInstall = ''
+        wrapProgram $out/bin/minira \
+          --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath [deps.toolchain]} \
+          --prefix DYLD_LIBRARY_PATH : ${lib.makeLibraryPath [deps.toolchain]}
+      '';
     };
   };
 }

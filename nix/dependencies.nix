@@ -5,12 +5,9 @@
     });
 
   nativeBuildInputs = with pkgs;
-    [openssl pkg-config]
+    [openssl pkg-config makeWrapper]
     ++ pkgs.lib.optionals pkgs.stdenv.isLinux [mold clang]
-    ++ pkgs.lib.optionals pkgs.stdenv.isDarwin []
-    ++ pkgs.lib.optionals pkgs.stdenv.isDarwin (
-      with pkgs.darwin.apple_sdk.frameworks; []
-    );
+    ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [];
 
   buildInputs = with pkgs; [
     openssl
