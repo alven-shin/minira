@@ -5,7 +5,7 @@
     });
 
   nativeBuildInputs = with pkgs;
-    [helix zlib curl]
+    [openssl pkg-config]
     ++ pkgs.lib.optionals pkgs.stdenv.isLinux [mold clang]
     ++ pkgs.lib.optionals pkgs.stdenv.isDarwin []
     ++ pkgs.lib.optionals pkgs.stdenv.isDarwin (
@@ -13,7 +13,9 @@
     );
 
   buildInputs = with pkgs; [
+    openssl
+    pkg-config
   ];
 
-  all = [toolchain] ++ nativeBuildInputs ++ buildInputs;
+  shell = with pkgs; [toolchain helix] ++ nativeBuildInputs ++ buildInputs;
 }
